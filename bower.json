@@ -1,0 +1,20 @@
+{
+  "name": "BFPolymer",
+  "version": "0.0.0",
+  "dependencies": {
+    "paper-toolbar": "PolymerElements/paper-toolbar#^1.0.0"
+  },
+  "description": "A Brainfuck interpreter using Polymer",
+  "main": "index.html",
+  "authors": [
+    "Kirn Gill"
+  ],
+  "license": "MIT",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
+}
