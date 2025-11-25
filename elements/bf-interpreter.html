@@ -1,0 +1,470 @@
+<link rel="import" href="../bower_components/polymer/polymer.html">
+<link rel="import" href="../bower_components/paper-input/paper-textarea.html">
+<link rel="import" href="../bower_components/paper-styles/paper-styles.html">
+<link rel="import" href="../bower_components/iron-flex-layout/iron-flex-layout.html">
+<link rel="import" href="../bower_components/iron-flex-layout/iron-flex-layout-classes.html">
+<link rel="import" href="../bower_components/iron-icons/iron-icons.html">
+<link rel="import" href="../bower_components/iron-icons/av-icons.html">
+<link rel="import" href="../bower_components/paper-card/paper-card.html">
+<link rel="import" href="../bower_components/paper-fab/paper-fab.html">
+<link rel="import" href="../bower_components/paper-menu-button/paper-menu-button.html">
+<link rel="import" href="../bower_components/paper-icon-button/paper-icon-button.html">
+<link rel="import" href="../bower_components/paper-menu/paper-menu.html">
+<link rel="import" href="../bower_components/paper-listbox/paper-listbox.html">
+<link rel="import" href="../bower_components/paper-item/paper-item.html">
+
+<dom-module id="bf-interpreter">
+  <template>
+    <style include="iron-flex iron-flex-alignment">
+      :host {
+        display: block;
+        height: 100%;
+        @apply(--layout-vertical);
+      }
+
+      .main-layout {
+        @apply(--layout-horizontal);
+        @apply(--layout-wrap);
+        margin: 16px;
+        align-items: flex-start;
+      }
+
+      .code-section {
+        @apply(--layout-flex-3);
+        min-width: 300px;
+        margin-right: 16px;
+        margin-bottom: 16px;
+      }
+
+      .io-section {
+        @apply(--layout-flex-2);
+        min-width: 450px; /* Wider for hex view */
+        margin-bottom: 16px;
+      }
+
+      paper-card {
+        width: 100%;
+        margin-bottom: 16px;
+        display: block;
+      }
+
+      .card-content {
+        padding: 16px;
+      }
+
+      .output-area {
+        background-color: #212121;
+        color: #00e676;
+        padding: 12px;
+        min-height: 100px;
+        font-family: 'Roboto Mono', monospace;
+        white-space: pre-wrap;
+        border-radius: 2px;
+      }
+
+      paper-fab {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        background-color: var(--paper-pink-a200);
+        color: white;
+        z-index: 100;
+      }
+
+      .toolbar-actions {
+        display: inline-block;
+      }
+
+      /* Hex Editor Styles */
+      .hex-editor {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        background-color: #fff;
+        color: #333;
+        overflow-x: auto;
+      }
+
+      .hex-header {
+        color: #000080;
+        font-weight: bold;
+        border-bottom: 1px solid #ccc;
+        margin-bottom: 4px;
+      }
+
+      .hex-row {
+        display: flex;
+      }
+
+      .hex-offset {
+        color: #000080;
+        margin-right: 16px;
+        min-width: 60px;
+      }
+
+      .hex-bytes {
+        display: flex;
+        margin-right: 16px;
+      }
+
+      .hex-byte {
+        width: 20px;
+        text-align: center;
+        margin-right: 4px;
+      }
+
+      .hex-byte.active {
+        background-color: #000080; /* Highlight color */
+        color: white;
+      }
+
+      .hex-ascii {
+        color: #666;
+        letter-spacing: 2px;
+      }
+
+      .registers {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 10px;
+        font-family: 'Roboto Mono', monospace;
+        color: #424242;
+      }
+
+      .register-item {
+        background: #eee;
+        padding: 4px 8px;
+        border-radius: 2px;
+        border: 1px solid #e0e0e0;
+      }
+
+      .register-label {
+        font-weight: bold;
+        color: #616161;
+      }
+
+      @media (max-width: 800px) {
+        .main-layout {
+          @apply(--layout-vertical);
+          margin: 0;
+        }
+        .code-section, .io-section {
+          width: 100%;
+          margin-right: 0;
+        }
+        paper-card {
+            margin: 8px 0;
+        }
+      }
+    </style>
+
+    <div class="main-layout">
+      <!-- Code Section -->
+      <div class="code-section">
+        <paper-card heading="Source Code" elevation="2">
+          <div class="card-content">
+             <paper-textarea
+              label=""
+              value="{{code}}"
+              rows="15"
+              no-label-float
+              style="font-family: 'Roboto Mono', monospace;">
+            </paper-textarea>
+          </div>
+          <div class="card-actions">
+             <div class="toolbar-actions">
+                <paper-menu-button horizontal-align="left" vertical-align="top">
+                  <paper-icon-button icon="menu" class="dropdown-trigger"></paper-icon-button>
+                  <paper-menu class="dropdown-content">
+                    <paper-item on-tap="step">Step</paper-item>
+                    <paper-item on-tap="reset">Reset</paper-item>
+                    <paper-item on-tap="clearOutput">Clear Output</paper-item>
+                  </paper-menu>
+                </paper-menu-button>
+             </div>
+          </div>
+        </paper-card>
+      </div>
+
+      <!-- IO Section -->
+      <div class="io-section">
+
+        <!-- Memory Dump Visualization -->
+        <paper-card heading="Memory Dump" elevation="2">
+          <div class="card-content">
+
+            <div class="registers">
+               <div class="register-item"><span class="register-label">PC:</span> [[_formatHex(pc, 4)]]</div>
+               <div class="register-item"><span class="register-label">Ptr:</span> [[_formatHex(pointer, 4)]]</div>
+            </div>
+
+            <div class="hex-editor">
+              <div class="hex-header">
+                Offset (h) 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+              </div>
+              <template is="dom-repeat" items="[[hexDumpRows]]" as="row">
+                <div class="hex-row">
+                  <div class="hex-offset">[[row.offset]]</div>
+                  <div class="hex-bytes">
+                    <template is="dom-repeat" items="[[row.bytes]]" as="byte">
+                      <div class$="[[_computeByteClass(byte.active)]]">[[byte.hex]]</div>
+                    </template>
+                  </div>
+                  <div class="hex-ascii">[[row.ascii]]</div>
+                </div>
+              </template>
+            </div>
+
+          </div>
+        </paper-card>
+
+        <!-- Input -->
+        <paper-card heading="Input" elevation="2">
+          <div class="card-content">
+            <paper-textarea label="Program Input" value="{{input}}" rows="1"></paper-textarea>
+          </div>
+        </paper-card>
+
+        <!-- Output -->
+        <paper-card heading="Output" elevation="2">
+          <div class="card-content">
+            <div class="output-area">[[output]]</div>
+          </div>
+        </paper-card>
+
+      </div>
+    </div>
+
+    <!-- Floating Action Button for Run/Stop -->
+    <paper-fab icon="[[_computeFabIcon(isRunning)]]" on-tap="toggleRun"></paper-fab>
+
+  </template>
+
+  <script>
+    Polymer({
+      is: 'bf-interpreter',
+
+      properties: {
+        code: {
+          type: String,
+          value: '++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.'
+        },
+        input: {
+          type: String,
+          value: ''
+        },
+        output: {
+          type: String,
+          value: ''
+        },
+        hexDumpRows: {
+          type: Array,
+          value: function() { return []; }
+        },
+        pointer: {
+          type: Number,
+          value: 0
+        },
+        pc: {
+          type: Number,
+          value: 0
+        },
+        isRunning: {
+          type: Boolean,
+          value: false
+        }
+      },
+
+      created: function() {
+        this.tapeSize = 65536;
+        this.memory = new Uint8Array(this.tapeSize);
+        this.cyclesPerFrame = 100; // Speed of execution
+      },
+
+      ready: function() {
+        this.reset();
+      },
+
+      _computeFabIcon: function(isRunning) {
+        return isRunning ? 'av:pause' : 'av:play-arrow';
+      },
+
+      _formatHex: function(val, padding) {
+        var hex = val.toString(16).toUpperCase();
+        while (hex.length < padding) {
+          hex = '0' + hex;
+        }
+        return hex;
+      },
+
+      _computeByteClass: function(active) {
+        return active ? 'hex-byte active' : 'hex-byte';
+      },
+
+      toggleRun: function() {
+        if (this.isRunning) {
+          this.stop();
+        } else {
+          this.run();
+        }
+      },
+
+      reset: function() {
+        this.stop();
+        this.pointer = 0;
+        this.pc = 0;
+        this.output = '';
+        this.memory.fill(0);
+        this.inputIndex = 0;
+        this._updateHexDump();
+      },
+
+      clearOutput: function() {
+        this.output = '';
+      },
+
+      _updateHexDump: function() {
+        // We want to show a window of lines around the current pointer
+        // Each line is 16 bytes.
+        // Let's show 8 lines total.
+        var bytesPerLine = 16;
+        var numLines = 10;
+
+        var currentLineIndex = Math.floor(this.pointer / bytesPerLine);
+        var startLineIndex = Math.max(0, currentLineIndex - Math.floor(numLines / 2));
+        var totalLines = Math.ceil(this.tapeSize / bytesPerLine);
+
+        // Ensure we don't scroll past end
+        if (startLineIndex + numLines > totalLines) {
+           startLineIndex = Math.max(0, totalLines - numLines);
+        }
+
+        var startByte = startLineIndex * bytesPerLine;
+        var endByte = Math.min(this.tapeSize, startByte + (numLines * bytesPerLine));
+
+        var rows = [];
+        for (var i = startByte; i < endByte; i += bytesPerLine) {
+          var row = {
+            offset: this._formatHex(i, 4),
+            bytes: [],
+            ascii: ''
+          };
+
+          for (var j = 0; j < bytesPerLine; j++) {
+            var addr = i + j;
+            if (addr < this.tapeSize) {
+               var val = this.memory[addr];
+               row.bytes.push({
+                 hex: this._formatHex(val, 2),
+                 active: addr === this.pointer
+               });
+
+               // ASCII char (show dot for non-printable)
+               if (val >= 32 && val <= 126) {
+                 row.ascii += String.fromCharCode(val);
+               } else {
+                 row.ascii += '.';
+               }
+            }
+          }
+          rows.push(row);
+        }
+        this.hexDumpRows = rows;
+      },
+
+      run: function() {
+        if (this.isRunning) return;
+        this.isRunning = true;
+        this._loop();
+      },
+
+      stop: function() {
+        this.isRunning = false;
+        if (this.animationId) {
+          cancelAnimationFrame(this.animationId);
+          this.animationId = null;
+        }
+      },
+
+      _loop: function() {
+        if (!this.isRunning) return;
+
+        for (var i = 0; i < this.cyclesPerFrame; i++) {
+          if (!this._stepLogic()) {
+            this.stop();
+            break;
+          }
+        }
+
+        this._updateHexDump();
+
+        if (this.isRunning) {
+          this.animationId = requestAnimationFrame(this._loop.bind(this));
+        }
+      },
+
+      step: function() {
+        this.stop();
+        this._stepLogic();
+        this._updateHexDump();
+      },
+
+      _stepLogic: function() {
+        if (this.pc >= this.code.length) return false;
+
+        var char = this.code[this.pc];
+
+        switch (char) {
+          case '>':
+            this.pointer = (this.pointer + 1) % this.tapeSize;
+            break;
+          case '<':
+            this.pointer = (this.pointer - 1 + this.tapeSize) % this.tapeSize;
+            break;
+          case '+':
+            this.memory[this.pointer]++;
+            break;
+          case '-':
+            this.memory[this.pointer]--;
+            break;
+          case '.':
+            this.output += String.fromCharCode(this.memory[this.pointer]);
+            break;
+          case ',':
+            if (this.inputIndex < this.input.length) {
+              this.memory[this.pointer] = this.input.charCodeAt(this.inputIndex);
+              this.inputIndex++;
+            } else {
+              this.memory[this.pointer] = 0; // EOF behavior
+            }
+            break;
+          case '[':
+            if (this.memory[this.pointer] === 0) {
+              var depth = 1;
+              while (depth > 0) {
+                this.pc++;
+                if (this.pc >= this.code.length) break;
+                if (this.code[this.pc] === '[') depth++;
+                else if (this.code[this.pc] === ']') depth--;
+              }
+            }
+            break;
+          case ']':
+            if (this.memory[this.pointer] !== 0) {
+              var depth = 1;
+              while (depth > 0) {
+                this.pc--;
+                if (this.pc < 0) break;
+                if (this.code[this.pc] === ']') depth++;
+                else if (this.code[this.pc] === '[') depth--;
+              }
+            }
+            break;
+        }
+
+        this.pc++;
+        return this.pc < this.code.length;
+      }
+    });
+  </script>
+</dom-module>
