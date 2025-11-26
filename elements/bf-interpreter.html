@@ -1,3 +1,6 @@
+<!--
+  -- vim: set tabstop=4 shiftwidth=4 expandtab filetype=html encoding=utf-8 :
+  -->
 <link rel="import" href="../bower_components/polymer/polymer.html">
 <link rel="import" href="../bower_components/paper-input/paper-textarea.html">
 <link rel="import" href="../bower_components/paper-styles/paper-styles.html">
@@ -272,17 +275,38 @@
         isRunning: {
           type: Boolean,
           value: false
+        },
+        _hexDumpStartAddr: {
+            type: Number,
+            value: -1
         }
       },
 
       created: function() {
-        this.tapeSize = 65536;
+        this.tapeSize = 0x10000;
         this.memory = new Uint8Array(this.tapeSize);
         this.cyclesPerFrame = 100; // Speed of execution
+        this.jumpMap = {};
       },
 
       ready: function() {
         this.reset();
+      },
+
+      _buildJumpMap: function() {
+        var stack = [];
+        this.jumpMap = {};
+        for (var i = 0; i < this.code.length; i++) {
+          if (this.code[i] === '[') {
+            stack.push(i);
+          } else if (this.code[i] === ']') {
+            if (stack.length > 0) {
+              var start = stack.pop();
+              this.jumpMap[start] = i;
+              this.jumpMap[i] = start;
+            }
+          }
+        }
       },
 
       _computeFabIcon: function(isRunning) {
@@ -316,6 +340,8 @@
         this.output = '';
         this.memory.fill(0);
         this.inputIndex = 0;
+        this._buildJumpMap();
+        this._hexDumpStartAddr = -1; // Force redraw
         this._updateHexDump();
       },
 
@@ -324,56 +350,85 @@
       },
 
       _updateHexDump: function() {
-        // We want to show a window of lines around the current pointer
-        // Each line is 16 bytes.
-        // Let's show 8 lines total.
         var bytesPerLine = 16;
         var numLines = 10;
+        var totalLines = Math.ceil(this.tapeSize / bytesPerLine);
 
         var currentLineIndex = Math.floor(this.pointer / bytesPerLine);
         var startLineIndex = Math.max(0, currentLineIndex - Math.floor(numLines / 2));
-        var totalLines = Math.ceil(this.tapeSize / bytesPerLine);
-
-        // Ensure we don't scroll past end
         if (startLineIndex + numLines > totalLines) {
            startLineIndex = Math.max(0, totalLines - numLines);
         }
-
         var startByte = startLineIndex * bytesPerLine;
-        var endByte = Math.min(this.tapeSize, startByte + (numLines * bytesPerLine));
 
-        var rows = [];
-        for (var i = startByte; i < endByte; i += bytesPerLine) {
-          var row = {
-            offset: this._formatHex(i, 4),
-            bytes: [],
-            ascii: ''
-          };
+        // "Slow path": a full redraw is needed if the viewport has shifted.
+        if (startByte !== this._hexDumpStartAddr) {
+          this._hexDumpStartAddr = startByte;
+          var endByte = Math.min(this.tapeSize, startByte + (numLines * bytesPerLine));
+          var rows = [];
+          for (var i = startByte; i < endByte; i += bytesPerLine) {
+            var row = {
+              offset: this._formatHex(i, 4),
+              bytes: [],
+              ascii: ''
+            };
+            var ascii = '';
+            for (var j = 0; j < bytesPerLine; j++) {
+              var addr = i + j;
+              if (addr < this.tapeSize) {
+                 var val = this.memory[addr];
+                 row.bytes.push({
+                   hex: this._formatHex(val, 2),
+                   active: addr === this.pointer
+                 });
+                 if (val >= 32 && val <= 126) {
+                   ascii += String.fromCharCode(val);
+                 } else {
+                   ascii += '.';
+                 }
+              }
+            }
+            row.ascii = ascii;
+            rows.push(row);
+          }
+          this.set('hexDumpRows', rows);
+        } else {
+        // "Fast path": just update the values in the existing rows.
+          for (var i = 0; i < this.hexDumpRows.length; i++) {
+            var rowAddr = this._hexDumpStartAddr + (i * bytesPerLine);
+            var ascii = '';
+            for (var j = 0; j < bytesPerLine; j++) {
+              var addr = rowAddr + j;
+              if (addr < this.tapeSize) {
+                var val = this.memory[addr];
+                var hex = this._formatHex(val, 2);
+                var active = addr === this.pointer;
 
-          for (var j = 0; j < bytesPerLine; j++) {
-            var addr = i + j;
-            if (addr < this.tapeSize) {
-               var val = this.memory[addr];
-               row.bytes.push({
-                 hex: this._formatHex(val, 2),
-                 active: addr === this.pointer
-               });
+                // Use Polymer's notifyPath for targeted updates
+                if (this.hexDumpRows[i].bytes[j].hex !== hex) {
+                  this.set(['hexDumpRows', i, 'bytes', j, 'hex'], hex);
+                }
+                if (this.hexDumpRows[i].bytes[j].active !== active) {
+                  this.set(['hexDumpRows', i, 'bytes', j, 'active'], active);
+                }
 
-               // ASCII char (show dot for non-printable)
-               if (val >= 32 && val <= 126) {
-                 row.ascii += String.fromCharCode(val);
-               } else {
-                 row.ascii += '.';
-               }
+                if (val >= 32 && val <= 126) {
+                  ascii += String.fromCharCode(val);
+                } else {
+                  ascii += '.';
+                }
+              }
+            }
+            if (this.hexDumpRows[i].ascii !== ascii) {
+              this.set(['hexDumpRows', i, 'ascii'], ascii);
             }
           }
-          rows.push(row);
         }
-        this.hexDumpRows = rows;
       },
 
       run: function() {
         if (this.isRunning) return;
+        this._buildJumpMap();
         this.isRunning = true;
         this._loop();
       },
@@ -440,24 +495,12 @@
             break;
           case '[':
             if (this.memory[this.pointer] === 0) {
-              var depth = 1;
-              while (depth > 0) {
-                this.pc++;
-                if (this.pc >= this.code.length) break;
-                if (this.code[this.pc] === '[') depth++;
-                else if (this.code[this.pc] === ']') depth--;
-              }
+              this.pc = this.jumpMap[this.pc] || this.pc;
             }
             break;
           case ']':
             if (this.memory[this.pointer] !== 0) {
-              var depth = 1;
-              while (depth > 0) {
-                this.pc--;
-                if (this.pc < 0) break;
-                if (this.code[this.pc] === ']') depth++;
-                else if (this.code[this.pc] === '[') depth--;
-              }
+              this.pc = this.jumpMap[this.pc] || this.pc;
             }
             break;
         }
